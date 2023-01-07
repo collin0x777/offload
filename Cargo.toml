@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 ssh = "0.1.4"
 ripgrep = "13.0.0"
+git2 = "0.15.0"
+ssh2 = "0.9.3"
