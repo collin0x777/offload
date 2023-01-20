@@ -8,9 +8,6 @@ use futures_lite::future::race;
 use tokio::{io::AsyncBufReadExt, io::BufReader, sync::watch, time::timeout};
 use tokio_stream::wrappers::LinesStream;
 
-use std::process::ExitStatus;
-
-
 fn get_repo_info(allow_uncommitted_changes: bool) -> Result<(String, String), String>{
     let repo = Repository::open(".").map_err(|err| format!("Failed to open repository: {}", err.message()))?;
     let remote = repo.find_remote("origin").map_err(|err| format!("Failed to find remote repository: {}", err.message()))?;
@@ -55,26 +52,18 @@ fn parse_args(args: Vec<String>) -> Result<(String, String), String> {
     return Ok((host.to_owned(), command.join(" ")));
 }
 
-async fn create_tmp_repository(session: &Session, branch_name: &str, remote_url: &str) -> Result<ExitStatus, openssh::Error> {
-    //"cd /tmp && git clone --single-branch --branch {} {} && cd {} && git status"
-    return session
-        .command("cd")
-        .arg("/tmp")
-        .arg("&&")
-        .arg("git")
-        .arg("clone")
-        .arg("--single-branch")
-        .arg("--branch")
-        .arg(branch_name)
-        .arg(remote_url)
-        .arg("&&")
-        .arg("cd")
-        .arg(branch_name)
-        .arg("&&")
-        .arg("git")
-        .arg("status")
-        .status()
-        .await;
+async fn create_tmp_repository(session: &Session, branch_name: &str, remote_url: &str) -> Result<bool, openssh::Error> {
+    let repo_location = format!("/tmp/{}", branch_name);
+    let directory_exists = session.command("test").arg("-d").arg(repo_location.as_str()).status().await.unwrap().success();
+
+    if directory_exists {
+        println!("Directory already exists, skipping clone");
+        return Ok(true);
+    }
+
+    let status = session.command("git").args(["clone", "--single-branch", "--branch", branch_name, remote_url, repo_location.as_str()]).status().await.unwrap();
+
+    return Ok(status.success());
 }
 
 async fn start_shell(session: &Session, initial_command: &String, tmp_repository_location: &String) -> Result<Option<i32>, openssh::Error> {
@@ -122,7 +111,7 @@ async fn main() {
 
     let exit_status = create_tmp_repository(&session, &branch_name, &remote_url).await.expect("Failed to create repository on host");
     let tmp_repository_location = format!("/tmp/{}", branch_name);
-    assert!(exit_status.success(), "Failed to create repository on host");
+    assert!(exit_status, "Failed to create repository on host");
 
     let (tx, mut rx) = watch::channel(false);
     let send_shutdown = move || tx.send(true).expect("Error sending Ctrl-C signal");
